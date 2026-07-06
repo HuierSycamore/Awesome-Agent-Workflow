@@ -1,6 +1,5 @@
 """AAW Workflow CLI — deterministic workflow state management."""
 
-from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -59,7 +58,7 @@ def init(
 @app.command()
 def status(
     sr: Annotated[Optional[str], typer.Option("--sr", help="SR 需求号")] = None,
-    use_json: Annotated[bool, typer.Option("--json", help="JSON 输出")] = False,
+    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON 输出")] = False,
 ):
     """查看工作流进度."""
     mgr = _get_manager()
@@ -112,7 +111,7 @@ def status(
 @app.command()
 def next(
     sr: Annotated[str, typer.Option("--sr", help="SR 需求号")],
-    use_json: Annotated[bool, typer.Option("--json", help="JSON 输出")] = False,
+    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON 输出")] = False,
 ):
     """获取下一个（或多个）就绪的 step."""
     mgr = _get_manager()
@@ -178,7 +177,7 @@ def done(
     sr: Annotated[str, typer.Option("--sr", help="SR 需求号")],
     step_id: Annotated[int, typer.Argument(help="Step ID")],
     data_raw: Annotated[Optional[str], typer.Option("--data", help="分叉数据 JSON")] = None,
-    use_json: Annotated[bool, typer.Option("--json", help="JSON 输出")] = False,
+    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON 输出")] = False,
 ):
     """标记 step 完成并生成后继."""
     mgr = _get_manager()
@@ -206,7 +205,7 @@ def done(
 def rollback(
     sr: Annotated[str, typer.Option("--sr", help="SR 需求号")],
     step_id: Annotated[int, typer.Argument(help="回退到的 Step ID")],
-    use_json: Annotated[bool, typer.Option("--json", help="JSON 输出")] = False,
+    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON 输出")] = False,
 ):
     """回退到指定 step，删除其所有下游 step."""
     mgr = _get_manager()
