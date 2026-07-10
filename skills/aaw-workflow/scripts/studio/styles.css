@@ -1063,6 +1063,15 @@ dialog::backdrop {
   gap: 12px;
 }
 
+.prompt-config .form-grid {
+  grid-template-columns: minmax(160px, 0.6fr) minmax(300px, 1.4fr);
+  align-items: start;
+}
+
+.prompt-config textarea {
+  min-height: 116px;
+}
+
 .insert-dialog label {
   margin-bottom: 12px;
 }

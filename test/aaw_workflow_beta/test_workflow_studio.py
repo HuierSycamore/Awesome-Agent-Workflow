@@ -100,12 +100,52 @@ class WorkflowStudioTests(unittest.TestCase):
                 "node_type": "confirm-sr-context",
                 "name": "confirm-sr-context",
                 "execution": "prompt",
-                "prompt_template": "prompts/confirm-sr-context.md",
+                "prompt_mode": "template",
+                "prompt_text": "prompts/confirm-sr-context.md",
             }
         )
 
         node = yaml.safe_load((self.defs / "confirm-sr-context.yaml").read_text("utf-8"))
         self.assertEqual({"template": "prompts/confirm-sr-context.md"}, node["prompt"])
+
+    def test_insert_prompt_node_writes_inline_prompt(self) -> None:
+        config = server.load_config()
+        edge = next(edge for edge in config["edges"] if edge["source"] == "sr-init" and edge["target"] == "sr-design")
+
+        server.insert_node(
+            {
+                "edge_id": edge["id"],
+                "node_type": "confirm-user-choice",
+                "name": "confirm-user-choice",
+                "execution": "prompt",
+                "prompt_mode": "inline",
+                "prompt_text": "向用户确认是否继续推进该流程节点。",
+            }
+        )
+
+        node = yaml.safe_load((self.defs / "confirm-user-choice.yaml").read_text("utf-8"))
+        self.assertEqual({"inline": "向用户确认是否继续推进该流程节点。"}, node["prompt"])
+
+    def test_insert_prompt_node_writes_step_prompt(self) -> None:
+        config = server.load_config()
+        edge = next(edge for edge in config["edges"] if edge["source"] == "sr-init" and edge["target"] == "sr-design")
+
+        server.insert_node(
+            {
+                "edge_id": edge["id"],
+                "node_type": "collect-context",
+                "name": "collect-context",
+                "execution": "prompt",
+                "prompt_mode": "steps",
+                "prompt_text": "check: 确认输入是否齐全\nconfirm: 让用户确认后继续",
+            }
+        )
+
+        node = yaml.safe_load((self.defs / "collect-context.yaml").read_text("utf-8"))
+        self.assertEqual(
+            [{"check": "确认输入是否齐全"}, {"confirm": "让用户确认后继续"}],
+            node["prompt"]["steps"],
+        )
 
     def test_delete_referenced_node_is_rejected(self) -> None:
         with self.assertRaises(server.StudioError):

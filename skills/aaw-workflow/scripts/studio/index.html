@@ -125,11 +125,20 @@
               <input id="editSkill" type="text" list="skillOptions" placeholder="module-design-gate" />
               <small>多个 skill 用英文逗号分隔；skill 执行方式下至少填写一个。</small>
             </label>
-            <label class="field" id="editPromptField">
-              <span>Prompt 模板</span>
-              <input id="editPrompt" type="text" placeholder="prompts/ar-split.md" />
-              <small>prompt 执行方式下建议填写模板路径；复杂 prompt 会保留原配置。</small>
-            </label>
+            <div class="prompt-config hidden" id="editPromptField">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Prompt 来源</span>
+                  <select id="editPromptMode"></select>
+                  <small id="editPromptModeHint"></small>
+                </label>
+                <label class="field">
+                  <span>Prompt 内容</span>
+                  <textarea id="editPrompt" rows="4" placeholder="prompts/ar-split.md"></textarea>
+                  <small>可以引用模板，也可以直接写内联说明或步骤清单。</small>
+                </label>
+              </div>
+            </div>
             <div class="readout hidden" id="editPromptSummary"></div>
           </section>
 
@@ -227,11 +236,20 @@
               <input id="newSkill" name="skill" list="skillOptions" placeholder="refresh-long-term-docs" />
               <small>多个 skill 用英文逗号分隔。</small>
             </label>
-            <label class="field" id="newPromptField">
-              <span>Prompt 模板</span>
-              <input id="newPrompt" name="prompt_template" placeholder="prompts/refresh-long-term-docs.md" />
-              <small>prompt 执行方式下填写模板路径。</small>
-            </label>
+            <div class="prompt-config hidden" id="newPromptField">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Prompt 来源</span>
+                  <select id="newPromptMode" name="prompt_mode"></select>
+                  <small id="newPromptModeHint"></small>
+                </label>
+                <label class="field">
+                  <span>Prompt 内容</span>
+                  <textarea id="newPrompt" name="prompt_text" rows="4" placeholder="prompts/refresh-long-term-docs.md"></textarea>
+                  <small>可以引用模板，也可以直接写内联说明或步骤清单。</small>
+                </label>
+              </div>
+            </div>
           </div>
         </section>
 

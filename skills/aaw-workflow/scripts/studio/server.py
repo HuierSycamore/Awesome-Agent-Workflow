@@ -265,6 +265,40 @@ def _normalize_skill_text(skill: str) -> list[str]:
     return [item.strip() for item in skill.replace("\n", ",").split(",") if item.strip()]
 
 
+def _build_prompt_config(payload: dict[str, Any]) -> dict[str, Any] | None:
+    legacy_template = str(payload.get("prompt_template") or "").strip()
+    mode = str(payload.get("prompt_mode") or ("template" if legacy_template else "")).strip()
+    text = str(payload.get("prompt_text") if "prompt_text" in payload else legacy_template).strip()
+    if not text:
+        return None
+    if mode == "template":
+        return {"template": text}
+    if mode == "inline":
+        return {"inline": text}
+    if mode == "steps":
+        return {"steps": _parse_prompt_steps(text)}
+    raise StudioError("prompt_mode 必须是 template、inline 或 steps")
+
+
+def _parse_prompt_steps(text: str) -> list[dict[str, str]]:
+    steps: list[dict[str, str]] = []
+    for index, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        key = f"step_{index}"
+        description = line
+        if ":" in line:
+            left, right = line.split(":", 1)
+            if left.strip() and right.strip():
+                key = left.strip()
+                description = right.strip()
+        steps.append({key: description})
+    return steps
+
+
 def _edge_by_id(flow: dict[str, Any], edge_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     for edge in build_edges(flow):
         if edge["id"] == edge_id:
@@ -323,9 +357,11 @@ def _build_node_config(payload: dict[str, Any], node_type: str) -> dict[str, Any
     skills = _normalize_skill_text(str(payload.get("skill") or ""))
     if skills:
         config["skill"] = skills
-    prompt_template = str(payload.get("prompt_template") or "").strip()
-    if prompt_template:
-        config["prompt"] = {"template": prompt_template}
+    prompt_config = _build_prompt_config(payload)
+    if execution == "prompt" and not prompt_config:
+        raise StudioError("prompt 执行方式需要配置 prompt")
+    if prompt_config:
+        config["prompt"] = prompt_config
     inputs = _parse_io_text(str(payload.get("input_text") or ""))
     outputs = _parse_io_text(str(payload.get("output_text") or ""))
     if inputs:
@@ -361,12 +397,12 @@ def update_node(payload: dict[str, Any]) -> dict[str, Any]:
             config["skill"] = skills
         else:
             config.pop("skill", None)
-    if "prompt_template" in payload:
-        prompt_template = str(payload.get("prompt_template") or "").strip()
-        if prompt_template:
-            config["prompt"] = {"template": prompt_template}
+    if "prompt_text" in payload or "prompt_template" in payload:
+        prompt_config = _build_prompt_config(payload)
+        if prompt_config:
+            config["prompt"] = prompt_config
         elif config.get("execution") == "prompt" and not config.get("prompt"):
-            raise StudioError("prompt 执行方式需要配置 prompt.template 或保留已有 prompt 配置")
+            raise StudioError("prompt 执行方式需要配置 prompt")
     if "input_text" in payload:
         config["input"] = _parse_io_text(str(payload.get("input_text") or ""))
     if "output_text" in payload:

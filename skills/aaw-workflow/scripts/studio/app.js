@@ -55,6 +55,27 @@ const EXECUTION_OPTIONS = [
   },
 ];
 
+const PROMPT_MODE_OPTIONS = [
+  {
+    value: "template",
+    label: "模板路径",
+    placeholder: "prompts/ar-split.md",
+    hint: "引用 prompts 目录里的 Markdown 模板，适合复用稳定提示词。",
+  },
+  {
+    value: "inline",
+    label: "内联说明",
+    placeholder: "直接写这一步要如何推进、如何和用户确认。",
+    hint: "直接写入 prompt.inline，适合短说明或临时流程节点。",
+  },
+  {
+    value: "steps",
+    label: "步骤清单",
+    placeholder: "check: 确认输入是否齐全\ncollect: 整理必要上下文\nconfirm: 向用户确认后继续",
+    hint: "每行一步；可写成 key: 描述，也可以直接写步骤文本。",
+  },
+];
+
 const NODE_TYPE_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 const els = {
@@ -88,6 +109,8 @@ const els = {
   editSkillField: document.querySelector("#editSkillField"),
   editSkill: document.querySelector("#editSkill"),
   editPromptField: document.querySelector("#editPromptField"),
+  editPromptMode: document.querySelector("#editPromptMode"),
+  editPromptModeHint: document.querySelector("#editPromptModeHint"),
   editPrompt: document.querySelector("#editPrompt"),
   editPromptSummary: document.querySelector("#editPromptSummary"),
   editInputs: document.querySelector("#editInputs"),
@@ -109,6 +132,8 @@ const els = {
   newSkillField: document.querySelector("#newSkillField"),
   newSkill: document.querySelector("#newSkill"),
   newPromptField: document.querySelector("#newPromptField"),
+  newPromptMode: document.querySelector("#newPromptMode"),
+  newPromptModeHint: document.querySelector("#newPromptModeHint"),
   newPrompt: document.querySelector("#newPrompt"),
   newInputs: document.querySelector("#newInputs"),
   newOutputs: document.querySelector("#newOutputs"),
@@ -126,8 +151,18 @@ function populateExecutionSelect(select) {
   ).join("");
 }
 
+function populatePromptModeSelect(select) {
+  select.innerHTML = PROMPT_MODE_OPTIONS.map(
+    (item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`
+  ).join("");
+}
+
 function executionMeta(value) {
   return EXECUTION_OPTIONS.find((item) => item.value === value) || EXECUTION_OPTIONS[0];
+}
+
+function promptModeMeta(value) {
+  return PROMPT_MODE_OPTIONS.find((item) => item.value === value) || PROMPT_MODE_OPTIONS[0];
 }
 
 function executionLabel(value) {
@@ -149,6 +184,18 @@ function syncExecutionFields(prefix) {
   promptField.classList.toggle("hidden", execution !== "prompt");
   skillInput.required = execution === "skill";
   promptInput.required = execution === "prompt";
+  syncPromptModeFields(prefix);
+}
+
+function syncPromptModeFields(prefix) {
+  const isEdit = prefix === "edit";
+  const mode = isEdit ? els.editPromptMode.value : els.newPromptMode.value;
+  const hint = isEdit ? els.editPromptModeHint : els.newPromptModeHint;
+  const input = isEdit ? els.editPrompt : els.newPrompt;
+  const meta = promptModeMeta(mode);
+
+  hint.textContent = meta.hint;
+  input.placeholder = meta.placeholder;
 }
 
 function renderSkillOptions() {
@@ -730,7 +777,9 @@ function renderInspector() {
   els.editName.value = config.name || node.type;
   els.editExecution.value = node.summary.execution || "noop";
   els.editSkill.value = (node.summary.skill || []).join(", ");
-  els.editPrompt.value = promptTemplateToText(config.prompt);
+  const promptForm = promptToForm(config.prompt);
+  els.editPromptMode.value = promptForm.mode;
+  els.editPrompt.value = promptForm.text;
   els.editInputs.value = ioToText(config.input || []);
   els.editOutputs.value = ioToText(config.output || []);
   els.editDataPrompt.value = dataPromptToText(config.data_prompt);
@@ -811,9 +860,29 @@ function dataPromptToText(value) {
   return value.description || JSON.stringify(value, null, 2);
 }
 
-function promptTemplateToText(value) {
-  if (!value || typeof value !== "object") return "";
-  return value.template || "";
+function promptToForm(value) {
+  if (!value) return { mode: "template", text: "" };
+  if (typeof value === "string") return { mode: "inline", text: value };
+  if (typeof value !== "object") return { mode: "inline", text: String(value) };
+  if (value.template) return { mode: "template", text: String(value.template) };
+  if (value.inline) return { mode: "inline", text: String(value.inline) };
+  if (Array.isArray(value.steps)) {
+    return {
+      mode: "steps",
+      text: value.steps
+        .map((step) => {
+          if (typeof step === "string") return step;
+          if (!step || typeof step !== "object") return "";
+          const entries = Object.entries(step);
+          if (!entries.length) return "";
+          const [key, description] = entries[0];
+          return `${key}: ${description}`;
+        })
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
+  return { mode: "inline", text: JSON.stringify(value, null, 2) };
 }
 
 function promptDescriptor(value) {
@@ -827,11 +896,9 @@ function promptDescriptor(value) {
 
 function renderPromptReadout(node) {
   const descriptor = promptDescriptor(node.config.prompt);
-  const template = promptTemplateToText(node.config.prompt);
-  const shouldShow = descriptor && !template;
-  els.editPromptSummary.classList.toggle("hidden", !shouldShow);
-  els.editPromptSummary.textContent = shouldShow
-    ? `当前节点已有 ${descriptor}，保存时会继续保留；填写 Prompt 模板会改为模板模式。`
+  els.editPromptSummary.classList.toggle("hidden", !descriptor);
+  els.editPromptSummary.textContent = descriptor
+    ? `当前节点已有 ${descriptor}；保存时会按所选 Prompt 来源写回。`
     : "";
 }
 
@@ -887,10 +954,10 @@ function validateNodePayload(payload, options = {}) {
   if (payload.execution === "skill" && !payload.skill.trim()) {
     return "Skill 执行方式需要填写至少一个 skill 名称。";
   }
-  if (payload.execution === "prompt" && !payload.prompt_template.trim()) {
+  if (payload.execution === "prompt" && !payload.prompt_text.trim()) {
     const current = options.editing ? nodeByType(payload.node_type) : null;
     if (!current?.config?.prompt) {
-      return "Prompt 执行方式需要填写 Prompt 模板。";
+      return "Prompt 执行方式需要填写 Prompt 内容。";
     }
   }
   return "";
@@ -915,6 +982,7 @@ function clearInsertForm() {
   els.newName.value = "";
   els.newExecution.value = "skill";
   els.newSkill.value = "";
+  els.newPromptMode.value = "template";
   els.newPrompt.value = "";
   els.newInputs.value = "";
   els.newOutputs.value = "";
@@ -927,6 +995,7 @@ function fillLongTermDocsExample() {
   els.newName.value = "{模块组名}-refresh-long-term-docs";
   els.newExecution.value = "skill";
   els.newSkill.value = "refresh-long-term-docs";
+  els.newPromptMode.value = "template";
   els.newPrompt.value = "";
   els.newInputs.value = [
     ".sdd/{SR}/{AR}/{AR}-{需求短名}-{模块组名}模块详细设计说明书.md",
@@ -950,13 +1019,14 @@ async function submitInsert(event) {
     name: els.newName.value.trim(),
     execution: els.newExecution.value,
     skill: els.newSkill.value.trim(),
-    prompt_template: els.newPrompt.value.trim(),
+    prompt_mode: els.newPromptMode.value,
+    prompt_text: els.newPrompt.value.trim(),
     input_text: els.newInputs.value,
     output_text: els.newOutputs.value,
     data_prompt: els.newDataPrompt.value,
   };
   if (payload.execution !== "skill") payload.skill = "";
-  if (payload.execution !== "prompt") payload.prompt_template = "";
+  if (payload.execution !== "prompt") payload.prompt_text = "";
   const invalid = validateNodePayload(payload);
   if (invalid) {
     showToast(invalid);
@@ -981,7 +1051,8 @@ async function saveSelectedNode(event) {
     name: els.editName.value,
     execution: els.editExecution.value,
     skill: els.editSkill.value,
-    prompt_template: els.editPrompt.value.trim(),
+    prompt_mode: els.editPromptMode.value,
+    prompt_text: els.editPrompt.value.trim(),
     input_text: els.editInputs.value,
     output_text: els.editOutputs.value,
     data_prompt: els.editDataPrompt.value,
@@ -1135,10 +1206,14 @@ function escapeHtml(value) {
 els.nodeSearch.addEventListener("input", renderNodeList);
 populateExecutionSelect(els.editExecution);
 populateExecutionSelect(els.newExecution);
+populatePromptModeSelect(els.editPromptMode);
+populatePromptModeSelect(els.newPromptMode);
 syncExecutionFields("edit");
 syncExecutionFields("new");
 els.editExecution.addEventListener("change", () => syncExecutionFields("edit"));
 els.newExecution.addEventListener("change", () => syncExecutionFields("new"));
+els.editPromptMode.addEventListener("change", () => syncPromptModeFields("edit"));
+els.newPromptMode.addEventListener("change", () => syncPromptModeFields("new"));
 els.toggleNodes.addEventListener("click", toggleNodeDrawer);
 els.closeNodes.addEventListener("click", () => els.nodeDrawer.classList.remove("open"));
 els.closeInspector.addEventListener("click", closeInspectorDrawer);
