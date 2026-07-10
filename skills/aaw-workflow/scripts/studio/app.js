@@ -92,7 +92,6 @@ const els = {
   nodeSearch: document.querySelector("#nodeSearch"),
   nodeList: document.querySelector("#nodeList"),
   flowCanvas: document.querySelector("#flowCanvas"),
-  flowOverview: document.querySelector("#flowOverview"),
   edgeLayer: document.querySelector("#edgeLayer"),
   nodeLayer: document.querySelector("#nodeLayer"),
   edgeControls: document.querySelector("#edgeControls"),
@@ -258,7 +257,6 @@ function render() {
   renderSkillOptions();
   renderNodeList();
   renderGraph();
-  renderOverview();
   renderInspector();
 }
 
@@ -343,25 +341,6 @@ function renderLaneLabels(layout) {
     label.style.left = "18px";
     label.style.top = `${y - 30}px`;
     els.edgeControls.appendChild(label);
-  }
-}
-
-function renderOverview() {
-  els.flowOverview.innerHTML = "";
-  const orderedNodes = orderNodesForGraph();
-
-  for (const node of orderedNodes) {
-    const kind = outgoingKind(node.type);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `overview-chip ${state.selectedNode === node.type ? "active" : ""}`;
-    button.title = node.type;
-    button.innerHTML = `
-      <span class="kind-dot ${escapeHtml(kind)}"></span>
-      <span>${escapeHtml(humanNodeName(node.type))}</span>
-    `;
-    button.addEventListener("click", () => selectNode(node.type, true));
-    els.flowOverview.appendChild(button);
   }
 }
 
