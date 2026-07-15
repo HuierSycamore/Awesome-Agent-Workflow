@@ -240,7 +240,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
             )
             (cwd / ".sdd" / "software_architecture.md").write_text("architecture", "utf-8")
             subprocess.run(
-                [sys.executable, str(AAW_SCRIPT), "telemetry", "step-start", "--sr", "SR-DATAFILE", "1", "--json"],
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
                 cwd=cwd,
                 check=True,
                 text=True,
@@ -255,7 +255,7 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
             )
             (cwd / ".sdd" / "SR-DATAFILE" / "SR-design.md").write_text("sr design", "utf-8")
             subprocess.run(
-                [sys.executable, str(AAW_SCRIPT), "telemetry", "step-start", "--sr", "SR-DATAFILE", "2", "--json"],
+                [sys.executable, str(AAW_SCRIPT), "next", "--sr", "SR-DATAFILE", "--json"],
                 cwd=cwd,
                 check=True,
                 text=True,

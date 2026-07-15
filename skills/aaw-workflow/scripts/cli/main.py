@@ -17,8 +17,6 @@ app = typer.Typer(
     help="AAW Workflow CLI",
     no_args_is_help=True,
 )
-telemetry_app = typer.Typer(help="Offline-first workflow telemetry")
-app.add_typer(telemetry_app, name="telemetry")
 
 SDD = Path(".sdd")
 
@@ -102,13 +100,6 @@ def start(
         wf = mgr.start(entry, vars_)
     except WorkflowError as e:
         _die(str(e))
-
-    # This is a local append only write: a telemetry outage never prevents a
-    # workflow from starting.
-    try:
-        _get_telemetry().workflow_started(wf)
-    except (OSError, TelemetryError) as e:
-        typer.echo(f"telemetry warning: {e}", err=True)
 
     payload = {
         "ok": True,
@@ -207,6 +198,22 @@ def next(
     except WorkflowError as e:
         _die(str(e))
 
+    for ready_step in mgr.get_ready(wf):
+        if ready_step.execution != "skill":
+            continue
+        attempt = ready_step.attempt or 1
+        if ready_step.execution_status in {"completed", "failed", "blocked", "superseded"}:
+            attempt += 1
+        try:
+            started_step = mgr.mark_started(wf, ready_step.id, attempt)
+        except WorkflowError as e:
+            _die(str(e))
+        try:
+            if started_step.type == "task-dev":
+                _get_telemetry().dev_started(wf, started_step, attempt)
+        except (OSError, TelemetryError) as e:
+            typer.echo(f"telemetry warning: {e}", err=True)
+
     payload = mgr.build_next_payload(wf)
     if use_json:
         _echo_json(payload)
@@ -267,31 +274,22 @@ def done(
     except (WorkflowError, DataError) as e:
         _die(str(e))
 
-    # Finish only an explicitly started execution.  In particular, `next`
-    # does not create a start timestamp and `done` never fabricates one.
+    # `next` persists the actual start timestamp; `done` sends the terminal Step.
+    store = _get_telemetry()
+    dev_state = None
     try:
-        store = _get_telemetry()
-        workflow_id = store.workflow_id(wf.sr)
-        if workflow_id and store._step_state_path(workflow_id, step, step.attempt).exists():
-            if step.type == "task-dev":
-                dev_state = store._dev_state_path(
-                    workflow_id,
-                    store.step_started(wf, step, step.attempt, started_at=step.started_at),
-                )
-                if dev_state.exists():
-                    store.dev_finished(wf, step, step.attempt)
-            store.step_finished(
-                wf,
-                step,
-                "completed",
-                step.attempt,
-                started_at=step.started_at,
-                ended_at=step.ended_at,
-            )
-        if wf.status == "done":
-            store.workflow_updated(wf, "completed")
+        file = None
+        if step.type == "task-dev":
+            dev_state = store.dev_finished(wf, step, step.attempt)
+            file = dev_state["file"]
+        message = store.step_message(wf, step, "done", file=file)
+        result["telemetry"] = TelemetryClient(Path.cwd()).send(message, dev_state)
     except (OSError, TelemetryError) as e:
         typer.echo(f"telemetry warning: {e}", err=True)
+        result["telemetry"] = {"status": "failed", "error": str(e)}
+    finally:
+        if step.type == "task-dev":
+            store.cleanup_step(wf, step, step.attempt, dev_state)
 
     if use_json:
         _echo_json(result)
@@ -310,217 +308,14 @@ def rollback(
     mgr = _get_manager()
     try:
         wf = mgr.load(sr)
-        target = wf.get_step(step_id)
-        if target is None:
-            raise WorkflowError(f"step {step_id} does not exist")
-        rolled_ids = {step_id}
-        pending_ids = list(target.next)
-        while pending_ids:
-            current_id = pending_ids.pop()
-            if current_id in rolled_ids:
-                continue
-            rolled_ids.add(current_id)
-            current = wf.get_step(current_id)
-            if current:
-                pending_ids.extend(current.next)
-        rolled_steps = [step for step in wf.steps if step.id in rolled_ids]
         result = mgr.rollback(wf, step_id)
     except WorkflowError as e:
         _die(str(e))
-
-    try:
-        store = _get_telemetry()
-        workflow_id = store.workflow_id(wf.sr)
-        if workflow_id:
-            for step in rolled_steps:
-                state_path = store._step_state_path(workflow_id, step, step.attempt)
-                if state_path.exists():
-                    store.step_finished(wf, step, "superseded", step.attempt, started_at=step.started_at)
-            store.workflow_updated(wf, "in_progress")
-    except (OSError, TelemetryError) as e:
-        typer.echo(f"telemetry warning: {e}", err=True)
 
     if use_json:
         _echo_json(result)
     else:
         typer.echo(f"已回退到 step {step_id}，移除 {result['removed']} 个下游 step")
-
-
-# ---------------------------------------------------------------------------
-# telemetry
-# ---------------------------------------------------------------------------
-
-@telemetry_app.command("configure")
-def telemetry_configure(
-    endpoint: Annotated[str, typer.Option("--endpoint", help="Telemetry server base URL")],
-):
-    """Persist a non-secret endpoint; keep the write token in AAW_TELEMETRY_TOKEN."""
-    try:
-        _get_telemetry().configure(endpoint)
-    except TelemetryError as e:
-        _die(str(e))
-    typer.echo("Telemetry endpoint saved. AAW_TELEMETRY_TOKEN is optional and is sent only when configured.")
-
-
-@telemetry_app.command("status")
-def telemetry_status(
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Show local queue, patch, and configuration diagnostics without uploading."""
-    store = _get_telemetry()
-    try:
-        queue = store.pending()
-        configs = store.config()
-        states = [state for _, state in store.completed_dev_states()]
-    except TelemetryError as e:
-        _die(str(e))
-    payload = {
-        "endpoint": configs["endpoint"] or None,
-        "token_configured": configs["token_present"],
-        "pending_records": len(queue),
-        "retrying_records": sum(1 for record in queue if record.get("attempts", 0)),
-        "rejected_records": sum(1 for record in queue if record.get("terminal")),
-        "pending_patches": sum(1 for state in states if state.get("patch_path") and not state.get("object_key")),
-        "local_state": str(store.dir),
-    }
-    if use_json:
-        _echo_json(payload)
-    else:
-        for key, value in payload.items():
-            typer.echo(f"{key}: {value}")
-
-
-@telemetry_app.command("preview")
-def telemetry_preview(
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Preview queued records locally; secrets and patch bytes are never printed."""
-    try:
-        records = _get_telemetry().pending()
-    except TelemetryError as e:
-        _die(str(e))
-    payload = {
-        "records": [
-            {key: record[key] for key in ("queue_id", "record_type", "record_id", "occurred_at", "data", "attempts", "last_error")}
-            for record in records
-        ]
-    }
-    if use_json:
-        _echo_json(payload)
-    else:
-        for record in payload["records"]:
-            typer.echo(f"{record['record_type']} {record['record_id']} @ {record['occurred_at']} (attempts={record['attempts']})")
-
-
-@telemetry_app.command("flush")
-def telemetry_flush(
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Retry queued state records, then upload and confirm pending Dev patches."""
-    try:
-        result = TelemetryClient(_get_telemetry()).flush()
-    except TelemetryError as e:
-        _die(str(e))
-    if use_json:
-        _echo_json(result)
-    else:
-        typer.echo(f"sent={result['sent']} uploaded={result['uploaded']} pending={result['pending']}")
-        if result["error"]:
-            typer.echo(f"upload pending: {result['error']}", err=True)
-
-
-def _load_telemetry_step(sr: str, step_id: int):
-    mgr = _get_manager()
-    try:
-        wf = mgr.load(sr)
-    except WorkflowError as e:
-        _die(str(e))
-    step = wf.get_step(step_id)
-    if step is None:
-        _die(f"step {step_id} does not exist")
-    return mgr, wf, step
-
-
-@telemetry_app.command("step-start")
-def telemetry_step_start(
-    sr: Annotated[str, typer.Option("--sr", help="SR requirement ID")],
-    step_id: Annotated[int, typer.Argument(help="Step ID actually beginning execution")],
-    attempt: Annotated[int, typer.Option("--attempt", min=1)] = 1,
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Record an actual step start. Calling `next` is intentionally not enough."""
-    mgr, wf, step = _load_telemetry_step(sr, step_id)
-    try:
-        step = mgr.mark_started(wf, step_id, attempt)
-        store = _get_telemetry()
-        record_id = store.step_started(wf, step, attempt, started_at=step.started_at)
-        dev_run_id = None
-        if step.type == "task-dev":
-            dev_run_id = store.dev_started(wf, step, attempt)["dev_run_id"]
-    except TelemetryError as e:
-        _die(str(e))
-    payload = {"ok": True, "step_execution_id": record_id, "dev_run_id": dev_run_id, "step_id": step_id, "attempt": attempt}
-    _echo_json(payload) if use_json else typer.echo(f"step {step_id} telemetry started")
-
-
-@telemetry_app.command("step-finish")
-def telemetry_step_finish(
-    sr: Annotated[str, typer.Option("--sr", help="SR requirement ID")],
-    step_id: Annotated[int, typer.Argument(help="Step ID")],
-    status: Annotated[str, typer.Option("--status", help="completed|failed|blocked|superseded")],
-    attempt: Annotated[int, typer.Option("--attempt", min=1)] = 1,
-):
-    """Record a terminal state for an already executing step."""
-    mgr, wf, step = _load_telemetry_step(sr, step_id)
-    store = _get_telemetry()
-    workflow_id = store.workflow_id(wf.sr)
-    if not workflow_id or not store._step_state_path(workflow_id, step, attempt).exists():
-        _die("Step telemetry has not started; run `aaw telemetry step-start` at actual execution start")
-    try:
-        step = mgr.mark_execution_terminal(wf, step_id, status, attempt)
-        store.step_finished(wf, step, status, attempt, started_at=step.started_at, ended_at=step.ended_at)
-    except TelemetryError as e:
-        _die(str(e))
-    typer.echo(f"step {step_id} telemetry marked {status}")
-
-
-@telemetry_app.command("dev-start")
-def telemetry_dev_start(
-    sr: Annotated[str, typer.Option("--sr", help="SR requirement ID")],
-    step_id: Annotated[int, typer.Argument(help="task-dev step ID")],
-    attempt: Annotated[int, typer.Option("--attempt", min=1)] = 1,
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Capture D0 before a task-dev changes code (HEAD, staged, unstaged, untracked)."""
-    mgr, wf, step = _load_telemetry_step(sr, step_id)
-    try:
-        step = mgr.mark_started(wf, step_id, attempt)
-        _get_telemetry().step_started(wf, step, attempt, started_at=step.started_at)
-        state = _get_telemetry().dev_started(wf, step, attempt)
-    except TelemetryError as e:
-        _die(str(e))
-    payload = {"ok": True, "dev_run_id": state["dev_run_id"], "started_at": state["started_at"]}
-    _echo_json(payload) if use_json else typer.echo(f"Dev telemetry started: {state['dev_run_id']}")
-
-
-@telemetry_app.command("dev-finish")
-def telemetry_dev_finish(
-    sr: Annotated[str, typer.Option("--sr", help="SR requirement ID")],
-    step_id: Annotated[int, typer.Argument(help="task-dev step ID")],
-    attempt: Annotated[int, typer.Option("--attempt", min=1)] = 1,
-    status: Annotated[str, typer.Option("--status", help="completed|failed|superseded")] = "completed",
-    use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
-):
-    """Capture D1 and queue the Dev Patch and code statistics without blocking on upload."""
-    _, wf, step = _load_telemetry_step(sr, step_id)
-    if status not in {"completed", "failed", "superseded"}:
-        _die("Dev finish status must be completed, failed, or superseded")
-    try:
-        state = _get_telemetry().dev_finished(wf, step, attempt, status)
-    except TelemetryError as e:
-        _die(str(e))
-    payload = {"ok": True, "dev_run_id": state["dev_run_id"], "status": status, "code_statistics": state.get("code_statistics")}
-    _echo_json(payload) if use_json else typer.echo(f"Dev telemetry marked {status}: {state['dev_run_id']}")
 
 
 def main() -> None:

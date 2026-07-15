@@ -429,6 +429,9 @@ class WorkflowManager:
             "type": step.type,
             "name": step.name,
             "execution": step.execution,
+            "execution_status": step.execution_status,
+            "attempt": step.attempt,
+            "started_at": step.started_at,
             "skill": step.skill,
             "prompt": step.prompt,
             "data_prompt": step.data_prompt,
@@ -446,7 +449,6 @@ class WorkflowManager:
                 "done_argv": done_argv,
                 "done_inline": self._done_inline(wf, step, requires_data),
                 "legacy_done": legacy_done,
-                "telemetry_start": self._telemetry_start_argv(wf, step),
             },
         }
 
@@ -483,11 +485,6 @@ class WorkflowManager:
             argv.extend(["--data", "<JSON>"])
         argv.append("--json")
         return " ".join(_quote_arg(arg) for arg in argv)
-
-    @staticmethod
-    def _telemetry_start_argv(wf: Workflow, step: Step) -> list[str]:
-        script = str((Path(__file__).resolve().parents[1] / "aaw.py")).replace("\\", "/")
-        return ["python", script, "telemetry", "step-start", "--sr", wf.sr, str(step.id), "--json"]
 
     def _step_requires_data(self, step: Step) -> bool:
         edge = self.templates[step.type]["edge"]
@@ -587,7 +584,7 @@ class WorkflowManager:
             raise WorkflowError(f"step {step_id} 已完成，不能重复 done")
         if step.execution == "skill" and not step.started_at:
             raise WorkflowError(
-                f"step {step_id} has no actual start timestamp; run `aaw telemetry step-start --sr {wf.sr} {step_id}` before executing the skill"
+                f"step {step_id} has no actual start timestamp; run `aaw next --sr {wf.sr}` before executing the skill"
             )
         self._ensure_required_inputs(step)
         self._ensure_required_deliverables(step)
