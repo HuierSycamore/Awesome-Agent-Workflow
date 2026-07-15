@@ -48,6 +48,10 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
                 p.write_text("required output", "utf-8")
 
     def _done(self, wf, step_id: int, data_raw: str | None = None):
+        step = wf.get_step(step_id)
+        assert step is not None
+        if step.execution == "skill" and not step.started_at:
+            self.mgr.mark_started(wf, step_id)
         self._touch_required_inputs(wf, step_id)
         self._touch_required_outputs(wf, step_id)
         return self.mgr.mark_done(wf, step_id, data_raw)
@@ -153,10 +157,29 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
             self.mgr.mark_done(wf, 1)
 
         (self.sdd / "software_architecture.md").write_text("architecture", "utf-8")
+        self.mgr.mark_started(wf, 1)
         result = self.mgr.mark_done(wf, 1)
 
         self.assertEqual(1, result["generated"])
         self.assertEqual("sr-design", self.mgr.get_ready(wf)[0].type)
+
+    def test_step_execution_timestamps_are_persisted_in_workflow_yaml(self) -> None:
+        wf = self.mgr.start("sr", {"SR": "SR-TIMESTAMPS"})
+
+        step = self.mgr.mark_started(wf, 1)
+        started_at = step.started_at
+        self.assertEqual("running", step.execution_status)
+        self.assertEqual(1, step.attempt)
+        self.assertIsNotNone(started_at)
+        self.assertEqual(started_at, self.mgr.load("SR-TIMESTAMPS").get_step(1).started_at)
+
+        self._done(wf, 1)
+        completed = self.mgr.load("SR-TIMESTAMPS").get_step(1)
+        assert completed is not None
+        self.assertEqual("completed", completed.execution_status)
+        self.assertEqual(started_at, completed.started_at)
+        self.assertIsNotNone(completed.ended_at)
+        self.assertGreaterEqual(completed.ended_at, started_at)
 
     def test_prompt_template_is_returned_by_next_payload(self) -> None:
         wf = self.mgr.start("sr", {"SR": "SR-001"})
@@ -217,6 +240,13 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
             )
             (cwd / ".sdd" / "software_architecture.md").write_text("architecture", "utf-8")
             subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "telemetry", "step-start", "--sr", "SR-DATAFILE", "1", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            subprocess.run(
                 [sys.executable, str(AAW_SCRIPT), "done", "--sr", "SR-DATAFILE", "1", "--json"],
                 cwd=cwd,
                 check=True,
@@ -224,6 +254,13 @@ class ConfigDrivenWorkflowTests(unittest.TestCase):
                 capture_output=True,
             )
             (cwd / ".sdd" / "SR-DATAFILE" / "SR-design.md").write_text("sr design", "utf-8")
+            subprocess.run(
+                [sys.executable, str(AAW_SCRIPT), "telemetry", "step-start", "--sr", "SR-DATAFILE", "2", "--json"],
+                cwd=cwd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
             subprocess.run(
                 [sys.executable, str(AAW_SCRIPT), "done", "--sr", "SR-DATAFILE", "2", "--json"],
                 cwd=cwd,

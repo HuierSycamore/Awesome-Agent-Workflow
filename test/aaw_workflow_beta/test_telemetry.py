@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "skills" / "aaw-workflow" / "scripts"
@@ -102,6 +103,23 @@ class TelemetryTests(unittest.TestCase):
                     os.environ["AAW_TELEMETRY_TOKEN"] = previous_token
 
             self.assertNotIn("Authorization", seen_headers[0])
+
+    def test_step_execution_reuses_yaml_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = TelemetryStore(Path(temp))
+            workflow = SimpleNamespace(sr="SR-TIMESTAMPS", vars={})
+            step = SimpleNamespace(id=1, type="module-design-gate", name="Design gate", skill=["module-design-gate"], execution="skill")
+            started_at = "2026-07-15T01:02:03Z"
+            ended_at = "2026-07-15T01:07:03Z"
+
+            store.step_started(workflow, step, 1, started_at=started_at)
+            store.step_finished(workflow, step, "completed", 1, started_at=started_at, ended_at=ended_at)
+
+            records = [record for record in store.pending() if record["record_type"] == "step_execution"]
+            self.assertEqual(started_at, records[0]["occurred_at"])
+            self.assertEqual(started_at, records[0]["data"]["started_at"])
+            self.assertEqual(ended_at, records[1]["occurred_at"])
+            self.assertEqual(ended_at, records[1]["data"]["ended_at"])
 
 
 if __name__ == "__main__":

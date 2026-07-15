@@ -172,6 +172,10 @@ def status(
                 "name": s.name,
                 "execution": s.execution,
                 "finished": s.finished,
+                "execution_status": s.execution_status,
+                "attempt": s.attempt,
+                "started_at": s.started_at,
+                "ended_at": s.ended_at,
                 "next": s.next,
             }
             for s in wf.steps
@@ -268,12 +272,22 @@ def done(
     try:
         store = _get_telemetry()
         workflow_id = store.workflow_id(wf.sr)
-        if workflow_id and store._step_state_path(workflow_id, step, 1).exists():
+        if workflow_id and store._step_state_path(workflow_id, step, step.attempt).exists():
             if step.type == "task-dev":
-                dev_state = store._dev_state_path(workflow_id, store.step_started(wf, step))
+                dev_state = store._dev_state_path(
+                    workflow_id,
+                    store.step_started(wf, step, step.attempt, started_at=step.started_at),
+                )
                 if dev_state.exists():
-                    store.dev_finished(wf, step)
-            store.step_finished(wf, step, "completed")
+                    store.dev_finished(wf, step, step.attempt)
+            store.step_finished(
+                wf,
+                step,
+                "completed",
+                step.attempt,
+                started_at=step.started_at,
+                ended_at=step.ended_at,
+            )
         if wf.status == "done":
             store.workflow_updated(wf, "completed")
     except (OSError, TelemetryError) as e:
@@ -319,9 +333,9 @@ def rollback(
         workflow_id = store.workflow_id(wf.sr)
         if workflow_id:
             for step in rolled_steps:
-                state_path = store._step_state_path(workflow_id, step, 1)
+                state_path = store._step_state_path(workflow_id, step, step.attempt)
                 if state_path.exists():
-                    store.step_finished(wf, step, "superseded")
+                    store.step_finished(wf, step, "superseded", step.attempt, started_at=step.started_at)
             store.workflow_updated(wf, "in_progress")
     except (OSError, TelemetryError) as e:
         typer.echo(f"telemetry warning: {e}", err=True)
@@ -424,7 +438,7 @@ def _load_telemetry_step(sr: str, step_id: int):
     step = wf.get_step(step_id)
     if step is None:
         _die(f"step {step_id} does not exist")
-    return wf, step
+    return mgr, wf, step
 
 
 @telemetry_app.command("step-start")
@@ -435,10 +449,11 @@ def telemetry_step_start(
     use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
 ):
     """Record an actual step start. Calling `next` is intentionally not enough."""
-    wf, step = _load_telemetry_step(sr, step_id)
+    mgr, wf, step = _load_telemetry_step(sr, step_id)
     try:
+        step = mgr.mark_started(wf, step_id, attempt)
         store = _get_telemetry()
-        record_id = store.step_started(wf, step, attempt)
+        record_id = store.step_started(wf, step, attempt, started_at=step.started_at)
         dev_run_id = None
         if step.type == "task-dev":
             dev_run_id = store.dev_started(wf, step, attempt)["dev_run_id"]
@@ -456,13 +471,14 @@ def telemetry_step_finish(
     attempt: Annotated[int, typer.Option("--attempt", min=1)] = 1,
 ):
     """Record a terminal state for an already executing step."""
-    wf, step = _load_telemetry_step(sr, step_id)
+    mgr, wf, step = _load_telemetry_step(sr, step_id)
     store = _get_telemetry()
     workflow_id = store.workflow_id(wf.sr)
     if not workflow_id or not store._step_state_path(workflow_id, step, attempt).exists():
         _die("Step telemetry has not started; run `aaw telemetry step-start` at actual execution start")
     try:
-        store.step_finished(wf, step, status, attempt)
+        step = mgr.mark_execution_terminal(wf, step_id, status, attempt)
+        store.step_finished(wf, step, status, attempt, started_at=step.started_at, ended_at=step.ended_at)
     except TelemetryError as e:
         _die(str(e))
     typer.echo(f"step {step_id} telemetry marked {status}")
@@ -476,8 +492,10 @@ def telemetry_dev_start(
     use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
 ):
     """Capture D0 before a task-dev changes code (HEAD, staged, unstaged, untracked)."""
-    wf, step = _load_telemetry_step(sr, step_id)
+    mgr, wf, step = _load_telemetry_step(sr, step_id)
     try:
+        step = mgr.mark_started(wf, step_id, attempt)
+        _get_telemetry().step_started(wf, step, attempt, started_at=step.started_at)
         state = _get_telemetry().dev_started(wf, step, attempt)
     except TelemetryError as e:
         _die(str(e))
@@ -494,7 +512,7 @@ def telemetry_dev_finish(
     use_json: Annotated[bool, typer.Option("--json/--no-json", help="JSON output")] = False,
 ):
     """Capture D1 and queue the Dev Patch and code statistics without blocking on upload."""
-    wf, step = _load_telemetry_step(sr, step_id)
+    _, wf, step = _load_telemetry_step(sr, step_id)
     if status not in {"completed", "failed", "superseded"}:
         _die("Dev finish status must be completed, failed, or superseded")
     try:

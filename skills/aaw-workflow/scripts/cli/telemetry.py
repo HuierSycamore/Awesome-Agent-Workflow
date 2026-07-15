@@ -214,13 +214,13 @@ class TelemetryStore:
     def _step_state_path(self, workflow_id: str, step: Step, attempt: int) -> Path:
         return self.dir / "steps" / workflow_id / f"{step.id}-{attempt}.json"
 
-    def step_started(self, wf: Workflow, step: Step, attempt: int = 1) -> str:
+    def step_started(self, wf: Workflow, step: Step, attempt: int = 1, *, started_at: str | None = None) -> str:
         workflow_id = self.workflow_started(wf)
         path = self._step_state_path(workflow_id, step, attempt)
         state = _json_load(path, {})
         if state.get("step_execution_id"):
             return state["step_execution_id"]
-        record_id, occurred_at = str(uuid.uuid4()), utc_now()
+        record_id, occurred_at = str(uuid.uuid4()), started_at or utc_now()
         data = {
             "workflow_run_id": workflow_id, "step_id": step.id, "step_type": step.type[:128],
             "step_name": step.name[:256], "skill_names": step.skill[:32], "execution_type": step.execution,
@@ -230,11 +230,20 @@ class TelemetryStore:
         _json_dump(path, {"step_execution_id": record_id, "started_at": occurred_at})
         return record_id
 
-    def step_finished(self, wf: Workflow, step: Step, status: str, attempt: int = 1) -> None:
+    def step_finished(
+        self,
+        wf: Workflow,
+        step: Step,
+        status: str,
+        attempt: int = 1,
+        *,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+    ) -> None:
         if status not in {"completed", "failed", "blocked", "superseded"}:
             raise TelemetryError("Step finish status must be completed, failed, blocked, or superseded")
-        record_id = self.step_started(wf, step, attempt)
-        occurred_at = utc_now()
+        record_id = self.step_started(wf, step, attempt, started_at=started_at)
+        occurred_at = ended_at or utc_now()
         self.enqueue("step_execution", record_id, {"status": status, "ended_at": occurred_at}, occurred_at=occurred_at)
 
     def _dev_state_path(self, workflow_id: str, step_execution_id: str) -> Path:

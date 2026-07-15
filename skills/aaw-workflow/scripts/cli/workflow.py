@@ -536,6 +536,47 @@ class WorkflowManager:
                 pmap.setdefault(nxt, []).append(s)
         return pmap
 
+    @staticmethod
+    def _occurred_at() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def mark_started(self, wf: Workflow, step_id: int, attempt: int = 1) -> Step:
+        """Persist the actual start signal for a step before it is executed."""
+        step = wf.get_step(step_id)
+        if step is None:
+            raise WorkflowError(f"step {step_id} does not exist")
+        if step.finished:
+            raise WorkflowError(f"step {step_id} is already complete")
+        if attempt < 1:
+            raise WorkflowError("attempt must be at least 1")
+        if step.execution_status == "running":
+            if step.attempt != attempt:
+                raise WorkflowError(f"step {step_id} is already running as attempt {step.attempt}")
+            return step
+        if step.execution_status in {"completed", "failed", "blocked", "superseded"} and attempt <= step.attempt:
+            raise WorkflowError(f"step {step_id} requires an attempt greater than {step.attempt}")
+
+        step.attempt = attempt
+        step.execution_status = "running"
+        step.started_at = self._occurred_at()
+        step.ended_at = None
+        self._save(wf)
+        return step
+
+    def mark_execution_terminal(self, wf: Workflow, step_id: int, status: str, attempt: int = 1) -> Step:
+        """Persist a terminal execution status for an explicitly started step."""
+        if status not in {"completed", "failed", "blocked", "superseded"}:
+            raise WorkflowError(f"invalid execution status: {status}")
+        step = wf.get_step(step_id)
+        if step is None:
+            raise WorkflowError(f"step {step_id} does not exist")
+        if step.attempt != attempt or not step.started_at:
+            raise WorkflowError(f"step {step_id} attempt {attempt} has not been started")
+        step.execution_status = status
+        step.ended_at = self._occurred_at()
+        self._save(wf)
+        return step
+
     # ---- done ----
 
     def mark_done(self, wf: Workflow, step_id: int, data_raw: str | None = None) -> dict[str, Any]:
@@ -544,11 +585,17 @@ class WorkflowManager:
             raise WorkflowError(f"step {step_id} 不存在")
         if step.finished:
             raise WorkflowError(f"step {step_id} 已完成，不能重复 done")
+        if step.execution == "skill" and not step.started_at:
+            raise WorkflowError(
+                f"step {step_id} has no actual start timestamp; run `aaw telemetry step-start --sr {wf.sr} {step_id}` before executing the skill"
+            )
         self._ensure_required_inputs(step)
         self._ensure_required_deliverables(step)
 
         ids, new_steps = self._generate_successors(wf, step, data_raw)
         step.finished = True
+        step.execution_status = "completed"
+        step.ended_at = self._occurred_at()
         step.next = ids
         wf.steps.extend(new_steps)
 
@@ -556,7 +603,14 @@ class WorkflowManager:
             wf.status = "done"
 
         self._save(wf)
-        return {"ok": True, "generated": len(ids), "next": ids}
+        return {
+            "ok": True,
+            "generated": len(ids),
+            "next": ids,
+            "attempt": step.attempt,
+            "started_at": step.started_at,
+            "ended_at": step.ended_at,
+        }
 
     def _ensure_required_inputs(self, step: Step) -> None:
         missing = self.check_inputs(step)["missing_required"]
