@@ -45,21 +45,22 @@
 
   // AAW 工作流步骤目录 — 与 skills/aaw-workflow/scripts/cli/definitions/ 下的
   // 节点 yaml（step_type = 文件名）及 flow.yaml 的边顺序保持一致。
+  // 展示名直接使用 step_type 原始值，与真实后端契约一致（后端不返回显示名）。
   // 唯一的门禁节点是 module-design-gate（choice 边，fail/blocked 原地拒绝）。
   const STEP_TYPES = [
-    { key: "sr-init",                    name: "仓库初始化",   isGate: false },
-    { key: "sr-design",                  name: "SR 需求设计",  isGate: false },
-    { key: "ar-split",                   name: "AR 拆分",      isGate: false },
-    { key: "ar-init",                    name: "AR 初始化",    isGate: false },
-    { key: "ar-clarify",                 name: "AR 澄清",      isGate: false },
-    { key: "module-boundary-design",     name: "模块边界设计", isGate: false },
-    { key: "module-detail-design-split", name: "模块详设拆分", isGate: false },
-    { key: "module-asis-analysis",       name: "模块现状分析", isGate: false },
-    { key: "module-tobe-design",         name: "模块目标设计", isGate: false },
-    { key: "module-test-design",         name: "模块测试设计", isGate: false },
-    { key: "module-design-gate",         name: "模块设计门禁", isGate: true  },
-    { key: "task-split",                 name: "任务拆分",     isGate: false },
-    { key: "task-dev",                   name: "任务开发",     isGate: false },
+    { key: "sr-init",                    isGate: false },
+    { key: "sr-design",                  isGate: false },
+    { key: "ar-split",                   isGate: false },
+    { key: "ar-init",                    isGate: false },
+    { key: "ar-clarify",                 isGate: false },
+    { key: "module-boundary-design",     isGate: false },
+    { key: "module-detail-design-split", isGate: false },
+    { key: "module-asis-analysis",       isGate: false },
+    { key: "module-tobe-design",         isGate: false },
+    { key: "module-test-design",         isGate: false },
+    { key: "module-design-gate",         isGate: true  },
+    { key: "task-split",                 isGate: false },
+    { key: "task-dev",                   isGate: false },
   ];
   // 工作流当前状态 → 活跃态映射，供明细列表使用。
   const WF_STATES = ["active", "stalled", "completed"];
@@ -276,7 +277,7 @@
         const median = round(120 + seed(s.key + "md") * 640);
         return {
           key: s.key,
-          displayName: s.name,
+          displayName: s.key,
           reached,
           completed,
           failed,
@@ -323,7 +324,7 @@
           status: isDone ? "completed" : "in_progress",
           activityState: wantState,
           furthestStepType: step.key,
-          furthestStepName: step.name,
+          furthestStepName: step.key,
           startedAt: started.toISOString(),
           lastActivityAt: lastAct.toISOString(),
           devEffectiveLines: gen,
