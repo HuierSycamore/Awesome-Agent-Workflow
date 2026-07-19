@@ -81,15 +81,14 @@ python <skill-dir>/scripts/aaw.py start --entry ar --var SR=SR-XXX --var AR=AR-X
 3. 若有多个 `ready`，向用户列出 `id/name/type/input/output` 并让用户选择。
 4. 若 `inputs.blocked=true`，先补齐 `inputs.missing_required` 中列出的 required 输入；缺失时不要执行子 skill，也不要执行 `commands.done`。
 5. 若 `deliverables.can_skip=true`，说明强制交付件已存在；不要重复执行子 skill。若 `data` 为空，可直接执行 `commands.done`；若 `data` 不为空，仍需先按 `data.fields` 构造数据文件。
-6. **会话隔离标记**：`.sdd/.current_session` 由 CLI 在 `start`/`next` 时自动写入，无需手工维护。它确保 question-tracker MCP Server 将 `.question_state.json` 写入当前 SR 的隔离目录，避免跨 SR 状态污染。
-7. 按 `execution` 执行：
+6. 按 `execution` 执行：
    - `skill`：加载并完整执行 `skill` 中列出的子技能；若同时存在 `prompt` 或 `data_prompt`，在子技能完成后继续按其说明收集数据。
    - `prompt`：按 `prompt` 执行。
    - `manual`：等待用户或外部动作完成。
    - `noop`：无需额外执行，按工作单继续推进。
-8. 对照 `deliverables.required` 检查强制交付件；缺失时不要执行 done。
-9. 若 `data` 不为空，根据 `data.fields` 和 `data_prompt` 构造 JSON，写入 `data_file.path`，然后执行 `commands.done`。
-10. 执行 `commands.done`，然后回到第 1 步。
+7. 对照 `deliverables.required` 检查强制交付件；缺失时不要执行 done。
+8. 若 `data` 不为空，根据 `data.fields` 和 `data_prompt` 构造 JSON，写入 `data_file.path`，然后执行 `commands.done`。
+9. 执行 `commands.done`，然后回到第 1 步。
 
 ### 门禁节点
 
